@@ -1,0 +1,1 @@
+export { uppercaseStep } from './uppercase';

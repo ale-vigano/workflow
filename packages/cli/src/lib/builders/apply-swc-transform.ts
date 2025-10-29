@@ -37,9 +37,12 @@ export async function applySwcTransform(
   const isTypeScript = filename.endsWith('.ts') || filename.endsWith('.tsx');
   const isTsx = filename.endsWith('.tsx');
 
+  // Normalize filename to use forward slashes for consistent workflowId generation
+  const normalizedFilename = filename.replace(/\\/g, '/');
+
   // Transform with SWC to support syntax esbuild doesn't
   const result = await transform(source, {
-    filename,
+    filename: normalizedFilename,
     swcrc: false,
     jsc: {
       parser: {

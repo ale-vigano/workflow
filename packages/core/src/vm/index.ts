@@ -98,6 +98,9 @@ export function createContext(options: CreateContextOptions) {
   g.URLSearchParams = globalThis.URLSearchParams;
   g.structuredClone = globalThis.structuredClone;
 
+  // Symbol must be available for 'use step' transformations
+  g.Symbol = globalThis.Symbol;
+
   // HACK: Shim `exports` for the bundle
   g.exports = {};
   (g as any).module = { exports: g.exports };

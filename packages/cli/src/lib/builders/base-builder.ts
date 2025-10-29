@@ -74,13 +74,11 @@ export abstract class BaseBuilder {
 
   protected async getInputFiles(): Promise<string[]> {
     const result = await glob(
-      this.config.dirs.map(
-        (dir) =>
-          `${resolve(
-            this.config.workingDir,
-            dir
-          )}/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}`
-      ),
+      this.config.dirs.map((dir) => {
+        const resolvedDir = resolve(this.config.workingDir, dir);
+        const pattern = `${resolvedDir.replace(/\\/g, '/')}/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}`;
+        return pattern;
+      }),
       {
         ignore: [
           '**/node_modules/**',
@@ -116,6 +114,7 @@ export abstract class BaseBuilder {
     if (previousResult) {
       return previousResult;
     }
+
     const state: {
       discoveredSteps: string[];
       discoveredWorkflows: string[];
@@ -141,8 +140,15 @@ export abstract class BaseBuilder {
     } catch (_) {}
 
     console.log(
-      `Discovering workflow directives`,
-      `${Date.now() - discoverStart}ms`
+      `[BaseBuilder] Discovery completado en ${Date.now() - discoverStart}ms`
+    );
+
+    // Normalize paths to use forward slashes
+    state.discoveredSteps = state.discoveredSteps.map((path) =>
+      path.replace(/\\/g, '/')
+    );
+    state.discoveredWorkflows = state.discoveredWorkflows.map((path) =>
+      path.replace(/\\/g, '/')
     );
 
     this.discoveredEntries.set(inputs, state);
@@ -230,8 +236,15 @@ export abstract class BaseBuilder {
       dirname(outfile)
     );
 
+    // Detect library files that need to be bundled (not externalized)
+    // Library files with 'use step' need to be included in the bundle for transformation
+    const libraryStepFiles = stepFiles.filter(
+      (file) =>
+        file.includes('node_modules') || file.includes('workflow-npm-library')
+    );
+
     // log the step files for debugging
-    await this.writeDebugFile(outfile, { stepFiles });
+    await this.writeDebugFile(outfile, { stepFiles, libraryStepFiles });
 
     const stepsBundleStart = Date.now();
     const workflowManifest: WorkflowManifest = {};
@@ -293,9 +306,12 @@ export abstract class BaseBuilder {
           entriesToBundle: externalizeNonSteps
             ? [
                 ...stepFiles,
+                ...libraryStepFiles,
                 ...(resolvedBuiltInSteps ? [resolvedBuiltInSteps] : []),
               ]
-            : undefined,
+            : libraryStepFiles.length > 0
+              ? libraryStepFiles
+              : undefined,
           outdir: outfile ? dirname(outfile) : undefined,
           tsBaseUrl,
           tsPaths,
@@ -349,27 +365,66 @@ export abstract class BaseBuilder {
     interimBundleCtx: esbuild.BuildContext;
     bundleFinal: (interimBundleResult: string) => Promise<void>;
   }> {
+    console.log('[BaseBuilder] 🔧 CREANDO BUNDLE DE WORKFLOWS');
+
     const { discoveredWorkflows: workflowFiles } = await this.discoverEntries(
       inputFiles,
       dirname(outfile)
     );
 
+    console.log(
+      '[BaseBuilder] 📁 ARCHIVOS WORKFLOW DESCUBIERTOS:',
+      workflowFiles.length
+    );
+
+    // Detect library files that need to be bundled (not externalized)
+    // Library files with 'use workflow' need to be included in the bundle for transformation
+    const libraryWorkflowFiles = workflowFiles.filter(
+      (file) =>
+        file.includes('node_modules') || file.includes('workflow-npm-library')
+    );
+
     // log the workflow files for debugging
-    await this.writeDebugFile(outfile, { workflowFiles });
+    await this.writeDebugFile(outfile, { workflowFiles, libraryWorkflowFiles });
 
     // Create a virtual entry that imports all files
+    // Add a fallback registry that will assign workflowId by function name using a manifest
+    // Placeholder __WORKFLOW_MANIFEST_FALLBACK__ will be replaced after bundling with a concrete mapping
     const imports =
+      `const __WF_FALLBACK = __WORKFLOW_MANIFEST_FALLBACK__;\n` +
       `globalThis.__private_workflows = new Map();\n` +
       workflowFiles
-        .map(
-          (file, workflowFileIdx) =>
-            `import * as workflowFile${workflowFileIdx} from '${file}';
-            Object.values(workflowFile${workflowFileIdx}).map(item => item?.workflowId && globalThis.__private_workflows.set(item.workflowId, item))`
-        )
+        .map((file, workflowFileIdx) => {
+          const normalizedFile = file.replace(/\\/g, '/');
+          return `const workflowFile${workflowFileIdx} = require('${normalizedFile}');
+            // Handle both direct exports and getter functions from esbuild
+            Object.keys(workflowFile${workflowFileIdx}).forEach(key => {
+              let item = workflowFile${workflowFileIdx}[key];
+              // If it's a getter function (esbuild creates these for some exports), call it
+              if (typeof item === 'function' && !item.name && key in workflowFile${workflowFileIdx}) {
+                try {
+                  item = item();
+                } catch (e) {
+                  // Keep original if calling fails
+                }
+              }
+              if (item?.workflowId) {
+                globalThis.__private_workflows.set(item.workflowId, item);
+              } else if (typeof item === 'function') {
+                const __maybeId = __WF_FALLBACK?.[item.name] || __WF_FALLBACK?.[key];
+                if (__maybeId) {
+                  try { item.workflowId = __maybeId; } catch (_) {}
+                  globalThis.__private_workflows.set(__maybeId, item);
+                }
+              }
+            })`;
+        })
         .join('\n');
 
-    const bundleStartTime = Date.now();
+    // const bundleStartTime = Date.now();
     const workflowManifest: WorkflowManifest = {};
+
+    console.log('[BaseBuilder] 🔧 EJECUTANDO ESBUILD BUNDLE');
 
     // Bundle with esbuild and our custom SWC plugin in workflow mode.
     // this bundle will be run inside a vm isolate
@@ -397,6 +452,7 @@ export abstract class BaseBuilder {
       plugins: [
         createSwcPlugin({
           mode: 'workflow',
+          entriesToBundle: [...workflowFiles, ...libraryWorkflowFiles],
           tsBaseUrl,
           tsPaths,
           workflowManifest,
@@ -406,12 +462,15 @@ export abstract class BaseBuilder {
         createNodeModuleErrorPlugin(),
       ],
     });
+
+    console.log('[BaseBuilder] 🔧 Ejecutando rebuild...');
     const interimBundle = await interimBundleCtx.rebuild();
 
-    this.logEsbuildMessages(interimBundle, 'intermediate workflow bundle');
+    console.log('[BaseBuilder] ✅ Bundle ejecutado exitosamente');
     console.log(
-      'Created intermediate workflow bundle',
-      `${Date.now() - bundleStartTime}ms`
+      '[BaseBuilder] 📋 Workflow manifest generado:',
+      Object.keys(workflowManifest.workflows || {}).length,
+      'workflows'
     );
     const partialWorkflowManifest = {
       workflows: workflowManifest.workflows,
@@ -453,7 +512,26 @@ export abstract class BaseBuilder {
     }
 
     const bundleFinal = async (interimBundle: string) => {
-      const workflowBundleCode = interimBundle;
+      let workflowBundleCode = interimBundle;
+
+      // Build a fallback map from function name -> workflowId using the manifest captured during transform
+      const fnToWorkflowId: Record<string, string> = {};
+      for (const fns of Object.values(workflowManifest.workflows || {})) {
+        for (const [fnName, data] of Object.entries(fns || {})) {
+          fnToWorkflowId[fnName] = (data as { workflowId: string }).workflowId;
+        }
+      }
+
+      // Inject the fallback mapping into the bundled code by replacing the placeholder token
+      try {
+        const replacement = JSON.stringify(fnToWorkflowId);
+        workflowBundleCode = workflowBundleCode.replace(
+          /__WORKFLOW_MANIFEST_FALLBACK__/g,
+          replacement
+        );
+      } catch (_) {
+        // If replacement fails, continue without fallback; existing direct workflowId assignments will still work
+      }
 
       // Create the workflow function handler with proper linter suppressions
       const workflowFunctionCode = `// biome-ignore-all lint: generated file

@@ -92,27 +92,53 @@ export function createSwcPlugin(options: SwcPluginOptions): Plugin {
 
           if (!resolvedPath) return null;
 
+          // Normalize the resolved path to use forward slashes for consistent comparison
+          const normalizedResolvedPath = resolvedPath.replace(/\\/g, '/');
+
+          // Check if this is an import from a library package (like @ekairos/story)
+          // If it's a relative import within a library package, we should include it in the bundle
+          // Also check for packages/story which is the local path when using npm link
+          const isLibraryPackage =
+            normalizedResolvedPath.includes('@ekairos/story') ||
+            normalizedResolvedPath.includes('workflow-npm-library') ||
+            normalizedResolvedPath.includes('/packages/story/');
+
+          // If this is a relative import and the resolved path is within a library package, include it in the bundle
+          if (isLibraryPackage && args.path.startsWith('.')) {
+            // Include this file in the bundle since it's an internal import within the library
+            return null;
+          }
+
           for (const entryToBundle of options.entriesToBundle) {
-            if (resolvedPath === entryToBundle) {
+            if (normalizedResolvedPath === entryToBundle) {
               return null;
             }
 
             // if the current entry imports a child that needs
             // to be bundled then it needs to also be bundled so
             // that the child can have our transform applied
-            if (parentHasChild(resolvedPath, entryToBundle)) {
+            if (parentHasChild(normalizedResolvedPath, entryToBundle)) {
               return null;
             }
           }
+
+          // For node_modules packages, use the package name (args.path)
+          // For local file paths (relative or absolute), use relative path from outdir
+          const isNodeModule =
+            resolvedPath &&
+            (resolvedPath.includes('/node_modules/') ||
+              resolvedPath.includes('\\node_modules\\'));
 
           const isFilePath =
             args.path.startsWith('.') || args.path.startsWith('/');
 
           return {
             external: true,
-            path: isFilePath
-              ? relative(options.outdir || '', resolvedPath)
-              : args.path,
+            path: isNodeModule
+              ? args.path // Use package name for node_modules (e.g., "eventsource-parser")
+              : isFilePath
+                ? relative(options.outdir || '', resolvedPath)
+                : args.path,
           };
         } catch (_) {}
         return null;
@@ -120,6 +146,17 @@ export function createSwcPlugin(options: SwcPluginOptions): Plugin {
 
       // Handle TypeScript and JavaScript files
       build.onLoad({ filter: jsTsRegex }, async (args) => {
+        console.log('[SWC Plugin] 🔧 Procesando:', args.path);
+
+        // Check if this is a library file
+        const isLibraryFile = args.path.includes('workflow-npm-library');
+        if (isLibraryFile) {
+          console.log(
+            '[SWC Plugin] 📚 ARCHIVO DE LIBRERÍA DETECTADO:',
+            args.path
+          );
+        }
+
         // Determine if this is a TypeScript file
         const isTypeScript =
           args.path.endsWith('.ts') || args.path.endsWith('.tsx');
@@ -131,9 +168,36 @@ export function createSwcPlugin(options: SwcPluginOptions): Plugin {
             loader = 'jsx';
           }
           const source = await readFile(args.path, 'utf8');
+
+          if (isLibraryFile) {
+            console.log('[SWC Plugin] 📚 CONTENIDO DEL ARCHIVO DE LIBRERÍA:');
+            console.log(
+              '[SWC Plugin] 📚 Longitud:',
+              source.length,
+              'caracteres'
+            );
+            console.log(
+              '[SWC Plugin] 📚 Primeras 200 caracteres:',
+              source.substring(0, 200)
+            );
+            console.log(
+              '[SWC Plugin] 📚 Contiene "use workflow":',
+              source.includes("'use workflow'")
+            );
+            console.log('[SWC Plugin] 📚 Archivo completo:', source);
+            console.log('[SWC Plugin] 📚 ARCHIVO LEÍDO CORRECTAMENTE');
+          }
+
+          // Normalize filename to use forward slashes for consistent workflowId generation
+          const normalizedFilename = args.path.replace(/\\/g, '/');
+
+          if (isLibraryFile) {
+            console.log('[SWC Plugin] 📚 EJECUTANDO TRANSFORMACIÓN SWC...');
+          }
+
           const { code: transformedCode, workflowManifest } =
             await applySwcTransform(
-              args.path,
+              normalizedFilename,
               source,
               options.mode,
               // we need to provide the tsconfig/jsconfig
@@ -144,6 +208,15 @@ export function createSwcPlugin(options: SwcPluginOptions): Plugin {
                 baseUrl: options.tsBaseUrl,
               }
             );
+
+          if (isLibraryFile) {
+            console.log('[SWC Plugin] 📚 TRANSFORMACIÓN SWC COMPLETADA');
+            console.log(
+              '[SWC Plugin] 📚 Código transformado longitud:',
+              transformedCode.length
+            );
+            console.log('[SWC Plugin] 📚 Workflow manifest:', workflowManifest);
+          }
 
           if (!options.workflowManifest) {
             options.workflowManifest = {};

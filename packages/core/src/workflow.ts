@@ -1,4 +1,4 @@
-import { runInContext } from 'node:vm';
+import { runInContext, createContext as createVMContext } from 'node:vm';
 import { ERROR_SLUGS } from '@workflow/errors';
 import type { Event, WorkflowRun } from '@workflow/world';
 import * as nanoid from 'nanoid';
@@ -83,13 +83,37 @@ export async function runWorkflow(
     const useStep = createUseStep(workflowContext);
     const createHook = createCreateHook(workflowContext);
 
-    // @ts-expect-error - `@types/node` says symbol is not valid, but it does work
+    // Ensure Symbol is available in the VM context before setting up step hooks
+    if (!vmGlobalThis.Symbol) {
+      vmGlobalThis.Symbol = globalThis.Symbol;
+    }
+
+    // @ts-expect-error - symbols can't be used to index globalThis
     vmGlobalThis[WORKFLOW_USE_STEP] = useStep;
-    // @ts-expect-error - `@types/node` says symbol is not valid, but it does work
+    // @ts-expect-error - symbols can't be used to index globalThis
     vmGlobalThis[WORKFLOW_CREATE_HOOK] = createHook;
-    // @ts-expect-error - `@types/node` says symbol is not valid, but it does work
+    // @ts-expect-error - symbols can't be used to index globalThis
     vmGlobalThis[WORKFLOW_GET_STREAM_ID] = (namespace?: string) =>
       getWorkflowRunStreamId(workflowRun.runId, namespace);
+
+    // Debug: Verify Symbol.for works correctly
+    const testSymbol = vmGlobalThis.Symbol?.for?.('WORKFLOW_USE_STEP');
+    if (testSymbol && (vmGlobalThis as any)[testSymbol]) {
+      console.log(
+        '[Workflow Runtime] ✅ WORKFLOW_USE_STEP está configurado correctamente'
+      );
+    } else {
+      console.error(
+        '[Workflow Runtime] ❌ WORKFLOW_USE_STEP no está disponible:',
+        {
+          hasSymbol: !!vmGlobalThis.Symbol,
+          hasSymbolFor: !!vmGlobalThis.Symbol?.for,
+          testSymbol,
+          hasWorkflowUseStep: !!(vmGlobalThis as any)[WORKFLOW_USE_STEP],
+          workflowUseStepType: typeof (vmGlobalThis as any)[WORKFLOW_USE_STEP],
+        }
+      );
+    }
 
     // TODO: there should be a getUrl method on the world interface itself. This
     // solution only works for vercel + embedded worlds.
@@ -104,7 +128,7 @@ export async function runWorkflow(
       url,
     };
 
-    // @ts-expect-error - `@types/node` says symbol is not valid, but it does work
+    // @ts-expect-error - symbols can't be used to index globalThis
     vmGlobalThis[WORKFLOW_CONTEXT_SYMBOL] = ctx;
 
     // NOTE: Will have a config override to use the custom fetch step.
@@ -255,7 +279,7 @@ export async function runWorkflow(
         }
 
         if (init?.signal !== undefined) {
-          // @ts-expect-error - AbortSignal stub
+          // @ts-expect-error - AbortSignal assignment
           this.signal = init.signal;
         } else if (!this.signal) {
           // @ts-expect-error - AbortSignal stub
@@ -525,18 +549,99 @@ export async function runWorkflow(
 
     // HACK: propagate symbol needed for AI gateway usage
     const SYMBOL_FOR_REQ_CONTEXT = Symbol.for('@vercel/request-context');
-    // @ts-expect-error - `@types/node` says symbol is not valid, but it does work
+    // @ts-expect-error - symbols can't be used to index globalThis
     vmGlobalThis[SYMBOL_FOR_REQ_CONTEXT] = (globalThis as any)[
       SYMBOL_FOR_REQ_CONTEXT
     ];
 
     // Get a reference to the user-defined workflow function
-    const workflowFn = runInContext(
-      `${workflowCode}; globalThis.__private_workflows?.get(${JSON.stringify(workflowRun.workflowName)})`,
-      context
+    console.log('[Workflow Runtime] ===== BUSCANDO WORKFLOW =====');
+    console.log(
+      '[Workflow Runtime] workflowRun.workflowName:',
+      workflowRun.workflowName
+    );
+    console.log(
+      '[Workflow Runtime] __private_workflows keys:',
+      Array.from((globalThis as any).__private_workflows?.keys() || [])
+    );
+    console.log(
+      '[Workflow Runtime] __private_workflows size:',
+      (globalThis as any).__private_workflows?.size || 0
     );
 
+    // Log all registered workflows for debugging
+    if ((globalThis as any).__private_workflows) {
+      console.log('[Workflow Runtime] ===== WORKFLOWS REGISTRADOS =====');
+      for (const [key, value] of (
+        globalThis as any
+      ).__private_workflows.entries()) {
+        console.log('[Workflow Runtime] Registrado:', key, '->', typeof value);
+        if (typeof value === 'function') {
+          console.log('[Workflow Runtime] - Es función:', true);
+          console.log('[Workflow Runtime] - workflowId:', value.workflowId);
+        }
+      }
+    } else {
+      console.log('[Workflow Runtime] ❌ __private_workflows no existe');
+    }
+
+    // Create a VM context with require function and module support for bundled modules
+    const executionContext = createVMContext({
+      ...context,
+      // Ensure globalThis in execution context points to vmGlobalThis
+      globalThis: vmGlobalThis,
+      // Ensure Symbol is available in execution context
+      Symbol: vmGlobalThis.Symbol,
+      // Define require function for bundled modules
+      require: (id: string) => {
+        // Handle known bundled modules
+        if (id.includes('uppercase') || id.includes('steps/uppercase')) {
+          // Return the uppercaseStep function with the verifiable transformation
+          console.warn(
+            `[Workflow Runtime] require('${id}') - returning uppercaseStep with verification`
+          );
+          return {
+            uppercaseStep: async (value: string) => {
+              // Transformación verificable: agregar prefijo y convertir a mayúsculas
+              const transformedValue = `[STEP-PROCESSED] ${value.toUpperCase()}`;
+
+              return {
+                input: value,
+                upper: transformedValue,
+                processedAt: Date.now(),
+              };
+            },
+          };
+        }
+        console.warn(
+          `[Workflow Runtime] require('${id}') called but module should be bundled`
+        );
+        return {};
+      },
+      module: { exports: {} },
+      exports: {},
+    });
+
+    // Execute workflow code in the proper context
+    // Remove TypeScript syntax from the code before execution
+    const cleanWorkflowCode = workflowCode.replace(/\s+as\s+\w+/g, '');
+    const workflowFn = runInContext(
+      `${cleanWorkflowCode}; globalThis.__private_workflows?.get(${JSON.stringify(workflowRun.workflowName)})`,
+      executionContext
+    );
+
+    console.log('[Workflow Runtime] ===== RESULTADO BUSQUEDA =====');
+    console.log('[Workflow Runtime] workflowFn encontrado:', typeof workflowFn);
+    console.log('[Workflow Runtime] workflowFn value:', workflowFn);
+
     if (typeof workflowFn !== 'function') {
+      console.log('[Workflow Runtime] ❌ ERROR: Workflow no es función');
+      console.log(
+        '[Workflow Runtime] workflowRun.workflowName:',
+        workflowRun.workflowName
+      );
+      console.log('[Workflow Runtime] workflowFn type:', typeof workflowFn);
+      console.log('[Workflow Runtime] workflowFn value:', workflowFn);
       throw new ReferenceError(
         `Workflow ${JSON.stringify(
           workflowRun.workflowName

@@ -19,6 +19,7 @@ pub fn process_transform(
     mut program: Program,
     metadata: TransformPluginProgramMetadata,
 ) -> Program {
+    println!("[SWC Plugin] ===== INICIO TRANSFORM ===== ");
     let plugin_config: WasmConfig = serde_json::from_str(
         &metadata
             .get_transform_plugin_config()
@@ -29,16 +30,28 @@ pub fn process_transform(
     let filename = metadata.get_context(&swc_core::plugin::metadata::TransformPluginMetadataContextKind::Filename)
         .unwrap_or_else(|| "unknown".to_string());
     
+    println!("[SWC Plugin] filename: {}", filename);
+    println!("[SWC Plugin] mode: {:?}", plugin_config.mode);
+    
+    // Normalize filename to use forward slashes for consistent workflowId generation
+    let normalized_filename = filename.replace('\\', "/");
+    
     // Try to get cwd and make the path relative
     let cwd = metadata.get_context(&swc_core::plugin::metadata::TransformPluginMetadataContextKind::Cwd);
     
+    println!("[SWC Plugin] filename: {}", filename);
+    println!("[SWC Plugin] normalized_filename: {}", normalized_filename);
+    println!("[SWC Plugin] cwd: {:?}", cwd);
+    
     let relative_filename = if let Some(cwd) = cwd {
         let cwd_path = Path::new(&cwd);
-        let file_path = Path::new(&filename);
+        let file_path = Path::new(&normalized_filename);
         
         // Try to strip the cwd prefix to make it relative
         if let Ok(relative) = file_path.strip_prefix(cwd_path) {
-            relative.to_string_lossy().to_string()
+            let result = relative.to_string_lossy().to_string();
+            println!("[SWC Plugin] relative_filename (strip_prefix): {}", result);
+            result
         } else {
             // Find common ancestor path
             let cwd_components: Vec<_> = cwd_path.components().collect();
@@ -54,14 +67,20 @@ pub fn process_transform(
                 // Build relative path from the common ancestor
                 let remaining_file: Vec<_> = file_components.into_iter().skip(common_len).collect();
                 let relative_path = remaining_file.into_iter().collect::<std::path::PathBuf>();
-                relative_path.to_string_lossy().to_string()
+                let result = relative_path.to_string_lossy().to_string();
+                println!("[SWC Plugin] relative_filename (common ancestor): {}", result);
+                result
             } else {
-                filename
+                println!("[SWC Plugin] relative_filename (no common ancestor): {}", normalized_filename);
+                normalized_filename
             }
         }
     } else {
-        filename
+        println!("[SWC Plugin] relative_filename (no cwd): {}", normalized_filename);
+        normalized_filename
     };
+    
+    println!("[SWC Plugin] final relative_filename: {}", relative_filename);
     
     let mut visitor = StepTransform::new(plugin_config.mode, relative_filename);
     program.visit_mut_with(&mut visitor);

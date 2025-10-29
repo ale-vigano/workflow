@@ -267,20 +267,28 @@ impl StepTransform {
         span: swc_core::common::Span,
         is_workflow: bool,
     ) -> String {
-        match fn_name {
+        // Normalize filename to use forward slashes for consistent ID generation
+        let normalized_filename = self.filename.replace('\\', "/");
+        
+        let result = match fn_name {
             Some(name) if name.starts_with("__builtin") => {
                 // Special case for __builtin functions: use only the function name
                 name.to_string()
             }
             Some(name) => {
                 let prefix = if is_workflow { "workflow" } else { "step" };
-                naming::format_name(prefix, &self.filename, name)
+                naming::format_name(prefix, &normalized_filename, name)
             }
             None => {
                 let prefix = if is_workflow { "workflow" } else { "step" };
-                naming::format_name(prefix, &self.filename, span.lo.0)
+                naming::format_name(prefix, &normalized_filename, span.lo.0)
             }
-        }
+        };
+        
+        println!("[SWC Transform] create_id - filename: {}, normalized: {}, fn_name: {:?}, is_workflow: {}, result: {}", 
+                 self.filename, normalized_filename, fn_name, is_workflow, result);
+        
+        result
     }
 
     // Helper function to convert parameter patterns to expressions
@@ -1571,6 +1579,7 @@ impl<'a> VisitMut for ComprehensiveUsageCollector<'a> {
 
 impl VisitMut for StepTransform {
     fn visit_mut_program(&mut self, program: &mut Program) {
+        println!("[SWC Transform] 🚀 INICIANDO PROCESAMIENTO DE PROGRAMA");
         // First pass: collect step functions
         program.visit_mut_children_with(self);
 
@@ -1935,7 +1944,9 @@ impl VisitMut for StepTransform {
                         }
                     }
                     ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(named)) => {
+                        println!("[SWC Transform] 📤 EXPORTACIÓN NOMBRADA: Procesando exportación nombrada");
                         if named.src.is_some() {
+                            println!("[SWC Transform] ❌ EXPORTACIÓN NOMBRADA: Re-exportación no permitida");
                             // Re-exports are not allowed
                             emit_error(WorkflowErrorKind::InvalidExport {
                                 span: named.span,
@@ -1945,6 +1956,8 @@ impl VisitMut for StepTransform {
                                     "use workflow"
                                 },
                             });
+                        } else {
+                            println!("[SWC Transform] ✅ EXPORTACIÓN NOMBRADA: Exportación directa permitida");
                         }
                     }
                     ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(default)) => {
@@ -2144,15 +2157,19 @@ impl VisitMut for StepTransform {
 
         // In workflow mode, add workflowId property to workflow functions
         if self.mode == TransformMode::Workflow && !self.workflow_exports_to_expand.is_empty() {
+            println!("[SWC Transform] 🔧 INYECCIÓN WORKFLOWID: Procesando {} funciones", self.workflow_exports_to_expand.len());
             // Process workflow functions to add workflowId property
             let workflow_functions: Vec<_> = self.workflow_exports_to_expand.drain(..).collect();
 
             for (fn_name, _, span) in workflow_functions {
+                println!("[SWC Transform] 🔧 INYECCIÓN WORKFLOWID: Agregando workflowId a función: {}", fn_name);
                 // Add workflowId assignment after the function declaration
                 items.push(ModuleItem::Stmt(
                     self.create_workflow_id_assignment(&fn_name, span),
                 ));
             }
+        } else if self.mode == TransformMode::Workflow {
+            println!("[SWC Transform] ❌ INYECCIÓN WORKFLOWID: Modo Workflow pero workflow_exports_to_expand está vacío");
         }
 
         // Clear the workflow_functions_needing_id since we've already processed them
@@ -2449,15 +2466,16 @@ impl VisitMut for StepTransform {
                                 // In workflow mode, just remove the directive
                                 self.remove_use_workflow_directive(&mut fn_decl.function.body);
 
-                                // Mark this function for expansion into multiple exports
-                                self.workflow_exports_to_expand.push((
-                                    fn_name.clone(),
-                                    Expr::Fn(FnExpr {
-                                        ident: Some(fn_decl.ident.clone()),
-                                        function: fn_decl.function.clone(),
-                                    }),
-                                    fn_decl.function.span,
-                                ));
+        // Mark this function for expansion into multiple exports
+        println!("[SWC Transform] 📝 REGISTRO WORKFLOW: Agregando función {} a workflow_exports_to_expand", fn_name);
+        self.workflow_exports_to_expand.push((
+            fn_name.clone(),
+            Expr::Fn(FnExpr {
+                ident: Some(fn_decl.ident.clone()),
+                function: fn_decl.function.clone(),
+            }),
+            fn_decl.function.span,
+        ));
 
                                 export_decl.visit_mut_children_with(self);
                             }
@@ -3268,12 +3286,14 @@ impl VisitMut for StepTransform {
                         let fn_name = fn_decl.ident.sym.to_string();
 
                         if self.has_workflow_directive(&fn_decl.function, false) {
+                            println!("[SWC Transform] ✅ FUNCIÓN WORKFLOW DETECTADA: {}", fn_name);
                             if !fn_decl.function.is_async {
                                 emit_error(WorkflowErrorKind::NonAsyncFunction {
                                     span: fn_decl.function.span,
                                     directive: "use workflow",
                                 });
                             } else {
+                                println!("[SWC Transform] ✅ FUNCIÓN WORKFLOW VÁLIDA: {} (async)", fn_name);
                                 self.workflow_function_names.insert(fn_name.clone());
 
                                 match self.mode {

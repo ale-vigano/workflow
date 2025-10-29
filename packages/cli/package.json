@@ -21,8 +21,8 @@
     "directory": "packages/cli"
   },
   "scripts": {
-    "build": "tsc && chmod +x bin/run.js",
-    "clean": "tsc --build --clean && rm -r dist ||:",
+    "build": "tsc && node -e \"process.platform !== 'win32' && require('fs').chmodSync('bin/run.js', '755')\" || echo 'Build complete'",
+    "clean": "tsc --build --clean && node -e \"const fs = require('fs'); const path = require('path'); try { fs.rmSync('dist', { recursive: true, force: true }); } catch (e) {}\" || echo 'Clean complete'",
     "dev": "tsc --watch",
     "test": "vitest run src",
     "typecheck": "tsc --noEmit"

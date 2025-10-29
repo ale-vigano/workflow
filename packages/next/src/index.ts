@@ -3,8 +3,7 @@ import type { NextConfig } from 'next';
 import path from 'node:path';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 
-// TODO: type for workflows.directories feature
-// type WorkflowDirectoryOption = string;
+type WorkflowDirectoryOption = string;
 
 type WorkflowLibraryOption = string;
 
@@ -158,20 +157,10 @@ export function withWorkflow({
       port?: number;
       dataDir?: string;
     };
-    // TODO: support workflows.directories to include local workflow directories
-    // directories?: WorkflowDirectoryOption[];
+    directories?: WorkflowDirectoryOption[];
     libraries?: WorkflowLibraryOption[];
   };
 }) {
-  // Automatically add libraries to transpilePackages
-  const workflowLibraries = workflows?.libraries ?? [];
-  if (workflowLibraries.length > 0) {
-    const existingTranspilePackages = nextConfig.transpilePackages ?? [];
-    nextConfig.transpilePackages = [
-      ...new Set([...existingTranspilePackages, ...workflowLibraries]),
-    ];
-  }
-
   if (!process.env.VERCEL_DEPLOYMENT_ID) {
     if (!process.env.WORKFLOW_TARGET_WORLD) {
       process.env.WORKFLOW_TARGET_WORLD = 'embedded';
@@ -244,9 +233,21 @@ export function withWorkflow({
       phase !== 'phase-production-server'
     ) {
       const shouldWatch = process.env.NODE_ENV === 'development';
-      // TODO: support for workflows.directories to scan local directories
-      // const additionalDirs: string[] = workflows?.directories ?? [];
+      const additionalDirs: string[] = workflows?.directories ?? [];
       const workflowLibraries: string[] = workflows?.libraries ?? [];
+
+      const resolvedAdditionalDirs = additionalDirs
+        .map((dir) => (typeof dir === 'string' ? dir : null))
+        .filter((dir): dir is string => Boolean(dir));
+
+      const directoryWorkflowFiles = new Set<string>();
+      for (const dir of resolvedAdditionalDirs) {
+        const absoluteDir = path.resolve(process.cwd(), dir);
+        const detected = scanWorkflowDirectiveFiles(absoluteDir);
+        for (const file of detected) {
+          directoryWorkflowFiles.add(file);
+        }
+      }
 
       const libraryFiles: string[] = [];
       const libraryDirs: string[] = [];
@@ -279,7 +280,14 @@ export function withWorkflow({
       }
 
       const loaderIncludePaths = Array.from(
-        new Set([...libraryDirs, ...libraryFiles])
+        new Set([
+          ...resolvedAdditionalDirs.map((dir) =>
+            toPosixPath(path.resolve(process.cwd(), dir))
+          ),
+          ...libraryDirs,
+          ...libraryFiles,
+          ...Array.from(directoryWorkflowFiles),
+        ])
       );
 
       const libraryModulesFromDirs = libraryDirs.map(
@@ -287,7 +295,11 @@ export function withWorkflow({
       );
 
       const builderIncludeModules = Array.from(
-        new Set([...libraryFiles, ...libraryModulesFromDirs])
+        new Set([
+          ...libraryFiles,
+          ...Array.from(directoryWorkflowFiles),
+          ...libraryModulesFromDirs,
+        ])
       );
 
       if (loaderIncludePaths.length > 0) {
@@ -298,7 +310,14 @@ export function withWorkflow({
       const workflowBuilder = new NextBuilder({
         watch: shouldWatch,
         // discover workflows from pages/app entries
-        dirs: ['pages', 'app', 'src/pages', 'src/app'],
+        dirs: [
+          'pages',
+          'app',
+          'src/pages',
+          'src/app',
+          ...resolvedAdditionalDirs,
+          ...libraryDirs,
+        ],
         workingDir: process.cwd(),
         buildTarget: 'next',
         workflowsBundlePath: '',
@@ -308,7 +327,7 @@ export function withWorkflow({
           ...(nextConfig.serverExternalPackages || []),
         ],
         includeModules: [...builderIncludeModules],
-      });
+      } as any);
 
       await workflowBuilder.build();
       process.env.WORKFLOW_NEXT_PRIVATE_BUILT = '1';

@@ -1,5 +1,42 @@
 # @workflow/world-testing
 
+## 4.0.1-beta.6
+
+### Patch Changes
+
+- Updated dependencies [0f845af]
+  - @workflow/cli@4.0.1-beta.5
+  - workflow@4.0.1-beta.5
+
+## 4.0.1-beta.5
+
+### Patch Changes
+
+- 392c12d: Only include built files in dist in the published package
+
+## 4.0.1-beta.4
+
+### Patch Changes
+
+- Updated dependencies [66332f2]
+- Updated dependencies [dbf2207]
+  - @workflow/cli@4.0.1-beta.4
+  - workflow@4.0.1-beta.4
+
+## 4.0.1-beta.3
+
+### Patch Changes
+
+- Updated dependencies [d3a4ed3]
+- Updated dependencies [d3a4ed3]
+- Updated dependencies [dfdb280]
+- Updated dependencies [7dad974]
+- Updated dependencies [7868434]
+- Updated dependencies [d3a4ed3]
+  - @workflow/world@4.0.1-beta.2
+  - @workflow/cli@4.0.1-beta.3
+  - workflow@4.0.1-beta.3
+
 ## 4.0.1-beta.2
 
 ### Patch Changes

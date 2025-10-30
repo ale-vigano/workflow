@@ -1,5 +1,4 @@
 import type { World } from '@workflow/world';
-import { createAuth } from './auth.js';
 import { createQueue } from './queue.js';
 import { createStorage } from './storage.js';
 import { createStreamer } from './streamer.js';
@@ -12,9 +11,8 @@ export type { APIConfig } from './utils.js';
 
 export function createVercelWorld(config?: APIConfig): World {
   return {
-    ...createQueue(),
+    ...createQueue(config),
     ...createStorage(config),
-    ...createAuth(config),
     ...createStreamer(config),
   };
 }

@@ -1,5 +1,21 @@
 # @workflow/world-vercel
 
+## 4.0.1-beta.3
+
+### Patch Changes
+
+- e367046: Allow setting baseUrl and token for queue service
+
+## 4.0.1-beta.2
+
+### Patch Changes
+
+- 7868434: Remove `AuthProvider` interface from `World` and associated implementations
+- Updated dependencies [d3a4ed3]
+- Updated dependencies [d3a4ed3]
+- Updated dependencies [7868434]
+  - @workflow/world@4.0.1-beta.2
+
 ## 4.0.1-beta.1
 
 ### Patch Changes

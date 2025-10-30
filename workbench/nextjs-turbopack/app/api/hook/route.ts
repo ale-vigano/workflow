@@ -1,1 +1,1 @@
-../../../../example/api/hook.ts
+export { POST } from '../../../../example/api/hook';

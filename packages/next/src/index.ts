@@ -28,6 +28,7 @@ export function withWorkflow({
   }
 
   const loaderPath = require.resolve('./loader');
+  console.log(`[WORKFLOW CONFIG] Loader path resolved: ${loaderPath}`);
 
   // configure the loader if turbopack is being used
   if (!nextConfig.turbopack) {
@@ -38,6 +39,9 @@ export function withWorkflow({
   }
   const existingRules = nextConfig.turbopack.rules as any;
 
+  console.log(
+    `[WORKFLOW CONFIG] Configuring Turbopack loaders for: *.tsx, *.ts, *.jsx, *.js`
+  );
   nextConfig.turbopack.rules = {
     ...existingRules,
     '*.tsx': {
@@ -56,6 +60,7 @@ export function withWorkflow({
 
   // configure the loader for webpack
   const existingWebpackModify = nextConfig.webpack;
+  console.log(`[WORKFLOW CONFIG] Configuring Webpack loader`);
   nextConfig.webpack = (...args) => {
     const [webpackConfig] = args;
     if (!webpackConfig.module) {
@@ -66,6 +71,9 @@ export function withWorkflow({
     }
     // loaders in webpack apply bottom->up so ensure
     // ours comes before the default swc transform
+    console.log(
+      `[WORKFLOW CONFIG] Adding webpack loader rule for: *.mjs, *.cjs, *.cts, *.ts, *.tsx, *.js, *.jsx`
+    );
     webpackConfig.module.rules.push({
       test: /.*\.(mjs|cjs|cts|ts|tsx|js|jsx)$/,
       loader: loaderPath,

@@ -317,12 +317,18 @@ export class NextBuilder extends BaseBuilder {
 
   protected async getInputFiles(): Promise<string[]> {
     const inputFiles = await super.getInputFiles();
-    return inputFiles.filter((item) =>
+    console.log(`[NEXT BUILDER] Total input files found: ${inputFiles.length}`);
+    const filtered = inputFiles.filter((item) =>
       // non-exact pattern match to try to narrow
       // down to just app route entrypoints, this will
       // not be valid when pages router support is added
       item.match(/[/\\](route|page|layout)\./)
     );
+    console.log(
+      `[NEXT BUILDER] Filtered input files (route/page/layout): ${filtered.length}`,
+      filtered
+    );
+    return filtered;
   }
 
   private async writeFunctionsConfig(outputDir: string) {

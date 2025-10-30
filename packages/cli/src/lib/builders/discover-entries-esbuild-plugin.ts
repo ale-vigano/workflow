@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
+import path from 'node:path';
 import enhancedResolveOriginal from 'enhanced-resolve';
 import type { Plugin } from 'esbuild';
 import { applySwcTransform } from './apply-swc-transform.js';
@@ -49,14 +50,47 @@ export function createDiscoverEntriesPlugin(state: {
   return {
     name: 'discover-entries-esbuild-plugin',
     setup(build) {
+      // minimal environment log to help diagnose Windows path issues
+      console.log(
+        `[DISCOVER PLUGIN] env platform=${process.platform} sep="${path.sep}"`
+      );
+
+      const isWorkflowish = (p: string | undefined) => {
+        if (!p) {
+          return false;
+        }
+        // Only log for explicit workflow locations or alias imports
+        return (
+          p.startsWith('@/') ||
+          p.includes(`${path.sep}workflows${path.sep}`) ||
+          p.includes('/workflows/') ||
+          p.endsWith(`${path.sep}workflows${path.sep}simple.ts`) ||
+          p.endsWith('/workflows/simple.ts')
+        );
+      };
+
       build.onResolve({ filter: jsTsRegex }, async (args) => {
         try {
           const resolved = await enhancedResolve(args.resolveDir, args.path);
-
           if (resolved) {
             importParents.set(args.importer, resolved);
+            if (
+              isWorkflowish(args.path) ||
+              isWorkflowish(args.importer) ||
+              isWorkflowish(resolved)
+            ) {
+              console.log(
+                `[DISCOVER PLUGIN] resolve: path="${args.path}" -> resolved="${resolved}" from="${args.importer}"`
+              );
+            }
           }
-        } catch (_) {}
+        } catch (error) {
+          if (args.path.startsWith('@/') || isWorkflowish(args.importer)) {
+            console.log(
+              `[DISCOVER PLUGIN] resolve-failed: path="${args.path}" from="${args.importer}"`
+            );
+          }
+        }
         return null;
       });
 
@@ -76,10 +110,17 @@ export function createDiscoverEntriesPlugin(state: {
 
           if (hasUseWorkflow) {
             state.discoveredWorkflows.push(args.path);
+            console.log(`[DISCOVER PLUGIN] use-workflow in: ${args.path}`);
           }
 
           if (hasUseStep) {
             state.discoveredSteps.push(args.path);
+            console.log(`[DISCOVER PLUGIN] use-step in: ${args.path}`);
+          }
+
+          if (!hasUseWorkflow && !hasUseStep && isWorkflowish(args.path)) {
+            // log only when file looks like a workflow location but has no directive
+            console.log(`[DISCOVER PLUGIN] no-directive in: ${args.path}`);
           }
 
           const { code: transformedCode } = await applySwcTransform(

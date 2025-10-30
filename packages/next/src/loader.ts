@@ -10,17 +10,33 @@ export default async function workflowLoader(
   sourceMap: any
 ): Promise<string> {
   const filename = this.resourcePath;
+  console.log(`[WORKFLOW LOADER] Processing file: ${filename}`);
+
   const normalizedSource = source.toString();
 
   // only apply the transform if file needs it
-  if (!normalizedSource.match(/(use step|use workflow)/)) {
+  const workflowMatch = normalizedSource.match(/(use step|use workflow)/);
+  if (!workflowMatch) {
+    console.log(
+      `[WORKFLOW LOADER] No "use workflow" or "use step" found in ${filename}, skipping transformation`
+    );
     return normalizedSource;
   }
+
+  console.log(
+    `[WORKFLOW LOADER] Found "${workflowMatch[0]}" in ${filename}, applying transformation`
+  );
 
   const isTypeScript = filename.endsWith('.ts') || filename.endsWith('.tsx');
   const isTsx = filename.endsWith('.tsx');
 
+  console.log(
+    `[WORKFLOW LOADER] File type detected - TypeScript: ${isTypeScript}, TSX: ${isTsx}`
+  );
+
   // Transform with SWC
+  console.log(`[WORKFLOW LOADER] Starting SWC transformation for ${filename}`);
+  const transformStart = Date.now();
   const result = await transform(normalizedSource, {
     filename,
     jsc: {
@@ -40,6 +56,14 @@ export default async function workflowLoader(
     sourceMaps: true,
     inlineSourcesContent: true,
   });
+
+  const transformDuration = Date.now() - transformStart;
+  console.log(
+    `[WORKFLOW LOADER] Transformation completed for ${filename} in ${transformDuration}ms`
+  );
+  console.log(
+    `[WORKFLOW LOADER] Output code length: ${result.code.length} characters`
+  );
 
   return result.code;
 }

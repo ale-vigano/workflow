@@ -73,25 +73,31 @@ export abstract class BaseBuilder {
   }
 
   protected async getInputFiles(): Promise<string[]> {
-    const result = await glob(
-      this.config.dirs.map(
-        (dir) =>
-          `${resolve(
-            this.config.workingDir,
-            dir
-          )}/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}`
-      ),
-      {
-        ignore: [
-          '**/node_modules/**',
-          '**/.git/**',
-          '**/.next/**',
-          '**/.vercel/**',
-          '**/.workflow-data/**',
-          '**/.well-known/workflow/**',
-        ],
-        absolute: true,
+    const patterns = this.config.dirs.map((dir) => {
+      const absoluteDir = resolve(this.config.workingDir, dir);
+      const posixDir = absoluteDir.replace(/\\/g, '/');
+      const pattern = `${posixDir}/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}`;
+      if (dir.includes('workflows') || dir.includes('app')) {
+        console.log(
+          `[BASE BUILDER] glob pattern dir="${dir}" absolute="${absoluteDir}" pattern="${pattern}"`
+        );
       }
+      return pattern;
+    });
+
+    const result = await glob(patterns, {
+      ignore: [
+        '**/node_modules/**',
+        '**/.git/**',
+        '**/.next/**',
+        '**/.vercel/**',
+        '**/.workflow-data/**',
+        '**/.well-known/workflow/**',
+      ],
+      absolute: true,
+    });
+    console.log(
+      `[BASE BUILDER] glob matches: ${result.length} (workingDir="${this.config.workingDir}")`
     );
     return result;
   }
@@ -111,9 +117,17 @@ export abstract class BaseBuilder {
     discoveredSteps: string[];
     discoveredWorkflows: string[];
   }> {
+    console.log(
+      `[DISCOVER ENTRIES] Called with ${inputs.length} input files:`,
+      inputs
+    );
+
     const previousResult = this.discoveredEntries.get(inputs);
 
     if (previousResult) {
+      console.log(
+        `[DISCOVER ENTRIES] Using cached result: ${previousResult.discoveredWorkflows.length} workflows, ${previousResult.discoveredSteps.length} steps`
+      );
       return previousResult;
     }
     const state: {
@@ -125,6 +139,9 @@ export abstract class BaseBuilder {
     };
 
     const discoverStart = Date.now();
+    console.log(
+      `[DISCOVER ENTRIES] Starting esbuild discovery on ${inputs.length} entrypoints...`
+    );
     try {
       await esbuild.build({
         treeShaking: true,
@@ -144,6 +161,11 @@ export abstract class BaseBuilder {
       `Discovering workflow directives`,
       `${Date.now() - discoverStart}ms`
     );
+    console.log(
+      `[DISCOVER ENTRIES] Discovery complete: ${state.discoveredWorkflows.length} workflows, ${state.discoveredSteps.length} steps`
+    );
+    console.log(`[DISCOVER ENTRIES] Workflows:`, state.discoveredWorkflows);
+    console.log(`[DISCOVER ENTRIES] Steps:`, state.discoveredSteps);
 
     this.discoveredEntries.set(inputs, state);
     return state;
@@ -253,7 +275,12 @@ export abstract class BaseBuilder {
 
     // Create a virtual entry that imports all files. All step definitions
     // will get registered thanks to the swc transform.
-    const imports = stepFiles.map((file) => `import '${file}';`).join('\n');
+    const imports = stepFiles
+      .map((file) => {
+        const normalizedFile = file.replace(/\\/g, '/');
+        return `import '${normalizedFile}';`;
+      })
+      .join('\n');
     const entryContent = `
     // Built in steps
     import '${builtInSteps}';
@@ -354,6 +381,11 @@ export abstract class BaseBuilder {
       dirname(outfile)
     );
 
+    console.log(
+      `[WORKFLOW BUILDER] Discovered ${workflowFiles.length} workflows:`,
+      workflowFiles
+    );
+
     // log the workflow files for debugging
     await this.writeDebugFile(outfile, { workflowFiles });
 
@@ -361,11 +393,11 @@ export abstract class BaseBuilder {
     const imports =
       `globalThis.__private_workflows = new Map();\n` +
       workflowFiles
-        .map(
-          (file, workflowFileIdx) =>
-            `import * as workflowFile${workflowFileIdx} from '${file}';
-            Object.values(workflowFile${workflowFileIdx}).map(item => item?.workflowId && globalThis.__private_workflows.set(item.workflowId, item))`
-        )
+        .map((file, workflowFileIdx) => {
+          const normalizedFile = file.replace(/\\/g, '/');
+          return `import * as workflowFile${workflowFileIdx} from '${normalizedFile}';
+            Object.values(workflowFile${workflowFileIdx}).map(item => item?.workflowId && globalThis.__private_workflows.set(item.workflowId, item))`;
+        })
         .join('\n');
 
     const bundleStartTime = Date.now();

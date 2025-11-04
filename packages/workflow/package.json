@@ -41,8 +41,8 @@
     "./runtime": "./dist/runtime.js"
   },
   "scripts": {
-    "build": "tsc && chmod +x bin/run.js",
-    "clean": "tsc --build --clean && rm -r dist ||:",
+    "build": "tsc && node ./scripts/set-bin-permissions.mjs",
+    "clean": "tsc --build --clean && rimraf dist",
     "dev": "tsc --watch",
     "test": "vitest run src",
     "typecheck": "tsc --noEmit"
@@ -60,7 +60,8 @@
   "devDependencies": {
     "@types/ms": "^2.1.0",
     "@types/node": "catalog:",
-    "@workflow/tsconfig": "workspace:*"
+    "@workflow/tsconfig": "workspace:*",
+    "rimraf": "^6.0.1"
   },
   "peerDependencies": {
     "@opentelemetry/api": "1"

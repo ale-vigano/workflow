@@ -94,24 +94,61 @@ export abstract class BaseBuilder {
   protected async getInputFiles(): Promise<string[]> {
     const patterns = this.config.dirs.map((dir) => {
       const resolvedDir = resolve(this.config.workingDir, dir);
-      // Normalize path separators to forward slashes for glob compatibility
       const normalizedDir = resolvedDir.replace(/\\/g, '/');
       return `${normalizedDir}/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}`;
     });
 
-    const result = await glob(patterns, {
-      ignore: [
-        '**/node_modules/**',
-        '**/.git/**',
-        '**/.next/**',
-        '**/.vercel/**',
-        '**/.workflow-data/**',
-        '**/.well-known/workflow/**',
-      ],
-      absolute: true,
-    });
+    let localResults: string[] = [];
+    if (patterns.length > 0) {
+      localResults = await glob(patterns, {
+        ignore: [
+          '**/node_modules/**',
+          '**/.git/**',
+          '**/.next/**',
+          '**/.vercel/**',
+          '**/.workflow-data/**',
+          '**/.well-known/workflow/**',
+        ],
+        absolute: true,
+      });
+    }
 
-    return result;
+    const libraryDirs = this.config.libraryDirs ?? [];
+    const normalizedLibraryDirs = Array.from(
+      new Set(
+        libraryDirs.filter((dir) => !!dir).map((dir) => dir.replace(/\\/g, '/'))
+      )
+    );
+
+    let libraryResults: string[] = [];
+    if (normalizedLibraryDirs.length > 0) {
+      const libraryPatterns = normalizedLibraryDirs.map(
+        (dir) => `${dir}/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}`
+      );
+
+      libraryResults = await glob(libraryPatterns, {
+        ignore: [
+          '**/.git/**',
+          '**/.next/**',
+          '**/.turbo/**',
+          '**/.vercel/**',
+          '**/.workflow-data/**',
+          '**/.well-known/workflow/**',
+        ],
+        absolute: true,
+        followSymbolicLinks: true,
+      });
+    }
+
+    const combined = new Set<string>();
+    for (const item of localResults) {
+      combined.add(item);
+    }
+    for (const item of libraryResults) {
+      combined.add(item);
+    }
+
+    return Array.from(combined);
   }
 
   /**

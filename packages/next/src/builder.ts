@@ -82,6 +82,10 @@ export class NextBuilder extends BaseBuilder {
       const normalizedGeneratedDir = workflowGeneratedDir.replace(/\\/g, '/');
       ignoredPathFragments.push(normalizedGeneratedDir);
 
+      const normalizedLibraryDirs = (this.config.libraryDirs || []).map((dir) =>
+        dir.replace(/\\/g, '/').toLowerCase()
+      );
+
       // There is a node.js bug on MacOS which causes closing file watchers to be really slow.
       // This limits the number of watchers to mitigate the issue.
       // https://github.com/nodejs/node/issues/29949
@@ -93,6 +97,7 @@ export class NextBuilder extends BaseBuilder {
         aggregateTimeout: 5,
         ignored: (pathname: string) => {
           const normalizedPath = pathname.replace(/\\/g, '/');
+          const lowerCasePath = normalizedPath.toLowerCase();
           const extension = extname(normalizedPath);
           if (extension && !watchableExtensions.has(extension)) {
             return true;
@@ -100,7 +105,24 @@ export class NextBuilder extends BaseBuilder {
           if (normalizedPath.startsWith(normalizedGeneratedDir)) {
             return true;
           }
+          for (const libraryDir of normalizedLibraryDirs) {
+            if (libraryDir && lowerCasePath.startsWith(libraryDir)) {
+              return false;
+            }
+          }
           for (const fragment of ignoredPathFragments) {
+            if (fragment === '/node_modules/') {
+              let shouldSkipFragment = false;
+              for (const libraryDir of normalizedLibraryDirs) {
+                if (libraryDir && lowerCasePath.startsWith(libraryDir)) {
+                  shouldSkipFragment = true;
+                  break;
+                }
+              }
+              if (shouldSkipFragment) {
+                continue;
+              }
+            }
             if (normalizedPath.includes(fragment)) {
               return true;
             }
@@ -312,8 +334,15 @@ export class NextBuilder extends BaseBuilder {
         });
       });
 
+      const directoriesToWatch = [this.config.workingDir];
+      if (this.config.libraryDirs) {
+        for (const libraryDir of this.config.libraryDirs) {
+          directoriesToWatch.push(libraryDir);
+        }
+      }
+
       watcher.watch({
-        directories: [this.config.workingDir],
+        directories: directoriesToWatch,
         startTime: 0,
       });
     }
@@ -321,12 +350,34 @@ export class NextBuilder extends BaseBuilder {
 
   protected async getInputFiles(): Promise<string[]> {
     const inputFiles = await super.getInputFiles();
-    return inputFiles.filter((item) =>
-      // non-exact pattern match to try to narrow
-      // down to just app route entrypoints, this will
-      // not be valid when pages router support is added
-      item.match(/[/\\](route|page|layout)\./)
+
+    const normalizedLibraryDirs = (this.config.libraryDirs || []).map((dir) =>
+      dir.replace(/\\/g, '/').toLowerCase()
     );
+    const routePattern = /[/\\](route|page|layout)\./;
+
+    const localFiles: string[] = [];
+    const libraryFiles: string[] = [];
+
+    for (const item of inputFiles) {
+      const normalizedItem = item.replace(/\\/g, '/');
+      const lowerCaseItem = normalizedItem.toLowerCase();
+
+      const belongsToLibrary = normalizedLibraryDirs.some((dir) =>
+        lowerCaseItem.startsWith(dir)
+      );
+
+      if (belongsToLibrary) {
+        libraryFiles.push(item);
+        continue;
+      }
+
+      if (routePattern.test(normalizedItem)) {
+        localFiles.push(item);
+      }
+    }
+
+    return [...localFiles, ...libraryFiles];
   }
 
   private async writeFunctionsConfig(outputDir: string) {
@@ -397,6 +448,7 @@ export class NextBuilder extends BaseBuilder {
   }> {
     const workflowsRouteDir = join(workflowGeneratedDir, 'flow');
     await mkdir(workflowsRouteDir, { recursive: true });
+    console.log('Building workflows bundle with input files:', inputFiles);
     return await this.createWorkflowsBundle({
       format: 'esm',
       outfile: join(workflowsRouteDir, 'route.js'),

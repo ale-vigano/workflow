@@ -13,6 +13,7 @@ interface BaseWorkflowConfig {
   watch?: boolean;
   dirs: string[];
   workingDir: string;
+  libraryDirs?: string[];
 
   // Optionally generate a client library for workflow execution. The preferred
   // method of using workflow is to use a loader within a framework (like

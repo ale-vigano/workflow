@@ -1,6 +1,105 @@
+import { existsSync } from 'node:fs';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { NextBuilder } from './builder.js';
 import type { NextConfig } from 'next';
 import semver from 'semver';
+
+function looksLikePath(identifier: string): boolean {
+  return (
+    identifier.startsWith('.') ||
+    identifier.startsWith('/') ||
+    identifier.includes('\\')
+  );
+}
+
+function resolveLibraryDir(
+  identifier: string,
+  workingDir: string
+): string | undefined {
+  if (looksLikePath(identifier)) {
+    const absolute = isAbsolute(identifier)
+      ? identifier
+      : resolve(workingDir, identifier);
+    if (!existsSync(absolute)) {
+      console.warn(
+        '[workflow-next] Unable to resolve library path',
+        identifier
+      );
+      return undefined;
+    }
+    return absolute;
+  }
+
+  let packageJsonPath: string | undefined;
+  try {
+    packageJsonPath = require.resolve(`${identifier}/package.json`, {
+      paths: [workingDir],
+    });
+  } catch (error) {
+    const workspaceRoot = join(workingDir, '..', '..');
+    const workspaceDirs = ['workbench', 'packages'];
+
+    for (const workspaceDir of workspaceDirs) {
+      const workspacePath = join(workspaceRoot, workspaceDir);
+      if (!existsSync(workspacePath)) {
+        continue;
+      }
+      const packagePath = join(workspacePath, identifier.replace('@', ''));
+      const candidate = join(packagePath, 'package.json');
+      if (existsSync(candidate)) {
+        packageJsonPath = candidate;
+        break;
+      }
+    }
+
+    if (!packageJsonPath) {
+      const fallback = join(
+        workingDir,
+        'node_modules',
+        identifier,
+        'package.json'
+      );
+      if (existsSync(fallback)) {
+        packageJsonPath = fallback;
+      }
+    }
+
+    if (!packageJsonPath) {
+      console.warn(
+        '[workflow-next] Failed to resolve workflow library',
+        identifier,
+        error
+      );
+      return undefined;
+    }
+  }
+
+  const packageDir = dirname(packageJsonPath);
+  const srcDir = join(packageDir, 'src');
+
+  return existsSync(srcDir) ? srcDir : packageDir;
+}
+
+function resolveLibraryDirs(
+  libraries: string[] | undefined,
+  workingDir: string
+): string[] {
+  if (!libraries || libraries.length === 0) {
+    return [];
+  }
+
+  const resolved = new Set<string>();
+  for (const identifier of libraries) {
+    if (typeof identifier !== 'string' || identifier.trim() === '') {
+      continue;
+    }
+    const libraryDir = resolveLibraryDir(identifier, workingDir);
+    if (libraryDir) {
+      resolved.add(libraryDir);
+    }
+  }
+  return Array.from(resolved);
+}
 
 export function withWorkflow(
   nextConfigOrFn:
@@ -17,6 +116,7 @@ export function withWorkflow(
         port?: number;
         dataDir?: string;
       };
+      libraries?: string[];
     };
   } = {}
 ) {
@@ -40,6 +140,8 @@ export function withWorkflow(
     ctx: { defaultConfig: NextConfig }
   ) {
     const loaderPath = require.resolve('./loader');
+    const workingDir = process.cwd();
+    const libraryDirs = resolveLibraryDirs(workflows?.libraries, workingDir);
 
     let nextConfig: NextConfig;
 
@@ -113,11 +215,12 @@ export function withWorkflow(
         watch: shouldWatch,
         // discover workflows from pages/app entries
         dirs: ['pages', 'app', 'src/pages', 'src/app'],
-        workingDir: process.cwd(),
+        workingDir,
         buildTarget: 'next',
         workflowsBundlePath: '', // not used in base
         stepsBundlePath: '', // not used in base
         webhookBundlePath: '', // node used in base
+        libraryDirs,
         externalPackages: [
           ...require('next/dist/lib/server-external-packages.json'),
           ...(nextConfig.serverExternalPackages || []),

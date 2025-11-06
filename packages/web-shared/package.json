@@ -26,7 +26,7 @@
     "directory": "packages/web-shared"
   },
   "scripts": {
-    "build": "tsc && cp -r src/trace-viewer/*.css dist/trace-viewer/",
+    "build": "tsc && pnpm exec shx mkdir -p dist/trace-viewer && pnpm exec shx cp src/trace-viewer/*.css dist/trace-viewer/",
     "dev": "tsc --watch",
     "clean": "tsc --build --clean && rm -r dist ||:",
     "typecheck": "tsc --noEmit",
@@ -53,6 +53,7 @@
     "@types/node": "catalog:",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "shx": "^0.3.4",
     "typescript": "catalog:",
     "@workflow/tsconfig": "workspace:*"
   }
